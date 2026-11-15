@@ -1,29 +1,22 @@
 """
 San Jose / South Bay Uber Demand Predictor
-Simple serverless function for Vercel.
-Pulls Open-Meteo weather + optional 511 traffic + OpenSky arrivals (best-effort).
-Scores demand and suggests zones for Uber drivers.
+Vercel Python serverless function.
 """
 
-from http.server import BaseHTTPRequestHandler
 import json
 import time
 import urllib.request
-import urllib.error
 from datetime import datetime
-import os
 
-# San Jose coordinates
 SJ_LAT = 37.3382
 SJ_LON = -121.8863
 
-# Simple zone suggestions based on common demand patterns
 ZONES = [
-    {"name": "SJC Airport", "reason": "Flight arrivals create consistent demand", "lat": 37.363, "lon": -121.929},
-    {"name": "Downtown San Jose", "reason": "Events, nightlife, restaurants", "lat": 37.333, "lon": -121.890},
-    {"name": "SAP Center area", "reason": "Sharks games & concerts → post-event surge", "lat": 37.332, "lon": -121.901},
-    {"name": "Santana Row / Valley Fair", "reason": "Shopping & dining evenings", "lat": 37.322, "lon": -121.947},
-    {"name": "North San Jose / tech campuses", "reason": "Commute & business travel", "lat": 37.408, "lon": -121.895},
+    {"name": "SJC Airport", "reason": "Flight arrivals create consistent demand"},
+    {"name": "Downtown San Jose", "reason": "Events, nightlife, restaurants"},
+    {"name": "SAP Center area", "reason": "Sharks games & concerts → post-event surge"},
+    {"name": "Santana Row / Valley Fair", "reason": "Shopping & dining evenings"},
+    {"name": "North San Jose / tech campuses", "reason": "Commute & business travel"},
 ]
 
 def fetch_json(url, timeout=8):
@@ -49,7 +42,6 @@ def get_weather():
     current = data.get("current", {})
     hourly = data.get("hourly", {})
     probs = hourly.get("precipitation_probability", [])
-    # Next 3 hours rain risk
     now_idx = 0
     try:
         times = hourly.get("time", [])
@@ -67,16 +59,13 @@ def get_weather():
     return {
         "temp_c": current.get("temperature_2m"),
         "precip_mm": current.get("precipitation"),
-        "weather_code": current.get("weather_code"),
         "next_3h_rain_prob": max_prob,
         "rain_risk": rain_risk,
-        "raw": data
     }
 
 def get_opensky_arrivals():
-    """Best-effort OpenSky arrivals for KSJC. Often rate-limited or slow."""
     end = int(time.time())
-    begin = end - 3600  # last hour
+    begin = end - 3600
     url = f"https://opensky-network.org/api/flights/arrival?airport=KSJC&begin={begin}&end={end}"
     data = fetch_json(url, timeout=10)
     if isinstance(data, list):
@@ -84,10 +73,9 @@ def get_opensky_arrivals():
     return {"arrivals_last_hour": 0, "error": data.get("error", "unknown") if isinstance(data, dict) else "failed"}
 
 def score_demand(weather, arrivals):
-    score = 40  # base
+    score = 40
     reasons = []
     
-    # Time of day boost (PST-ish, rough)
     hour = datetime.now().hour
     if 7 <= hour <= 9 or 16 <= hour <= 19:
         score += 15
@@ -96,14 +84,12 @@ def score_demand(weather, arrivals):
         score += 10
         reasons.append("Evening / late night")
     
-    # Weather
     if weather.get("rain_risk"):
         score += 25
         reasons.append(f"Rain risk ({weather.get('next_3h_rain_prob', 0)}% next 3h)")
     else:
         reasons.append("Dry conditions")
     
-    # Airport
     arr = arrivals.get("arrivals_last_hour", 0)
     if arr >= 5:
         score += 20
@@ -126,21 +112,14 @@ def score_demand(weather, arrivals):
         level = "LOW"
         advice = "Slower period. Stay near high-activity zones or wait for weather/events."
     
-    return {
-        "score": score,
-        "level": level,
-        "advice": advice,
-        "reasons": reasons
-    }
+    return {"score": score, "level": level, "advice": advice, "reasons": reasons}
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        weather = get_weather()
-        arrivals = get_opensky_arrivals()
-        demand = score_demand(weather, arrivals)
-        
-        # Build simple mobile-friendly HTML
-        html = f"""<!DOCTYPE html>
+def handler(request):
+    weather = get_weather()
+    arrivals = get_opensky_arrivals()
+    demand = score_demand(weather, arrivals)
+    
+    html = f"""<!DOCTYPE html>
 <html lang=\"en\">
 <head>
 <meta charset=\"utf-8\">
@@ -182,10 +161,12 @@ small {{ color: #94a3b8; }}
 <small>Data: Open-Meteo + OpenSky (best effort). Not real-time Uber supply. Refresh for update.</small>
 </body>
 </html>"""
-        
-        self.send_response(200)
-        self.send_header("Content-type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(html.encode("utf-8"))
-        return
+    
+    return {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-cache"
+        },
+        "body": html
+    }
