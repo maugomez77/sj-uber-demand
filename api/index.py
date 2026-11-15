@@ -1,12 +1,13 @@
 """
-San Jose / South Bay Uber Demand Predictor
-Vercel Python serverless function.
+San Jose Uber Demand - Flask app for Vercel
 """
-
+from flask import Flask, Response
 import json
 import time
 import urllib.request
 from datetime import datetime
+
+app = Flask(__name__)
 
 SJ_LAT = 37.3382
 SJ_LON = -121.8863
@@ -38,7 +39,6 @@ def get_weather():
     data = fetch_json(url)
     if "error" in data:
         return {"error": data["error"], "rain_risk": False, "temp_c": None}
-    
     current = data.get("current", {})
     hourly = data.get("hourly", {})
     probs = hourly.get("precipitation_probability", [])
@@ -55,10 +55,8 @@ def get_weather():
     next_probs = probs[now_idx:now_idx+3] if probs else []
     max_prob = max(next_probs) if next_probs else 0
     rain_risk = max_prob >= 30 or current.get("precipitation", 0) > 0
-    
     return {
         "temp_c": current.get("temperature_2m"),
-        "precip_mm": current.get("precipitation"),
         "next_3h_rain_prob": max_prob,
         "rain_risk": rain_risk,
     }
@@ -70,12 +68,11 @@ def get_opensky_arrivals():
     data = fetch_json(url, timeout=10)
     if isinstance(data, list):
         return {"arrivals_last_hour": len(data), "error": None}
-    return {"arrivals_last_hour": 0, "error": data.get("error", "unknown") if isinstance(data, dict) else "failed"}
+    return {"arrivals_last_hour": 0, "error": "unavailable"}
 
 def score_demand(weather, arrivals):
     score = 40
     reasons = []
-    
     hour = datetime.now().hour
     if 7 <= hour <= 9 or 16 <= hour <= 19:
         score += 15
@@ -83,13 +80,11 @@ def score_demand(weather, arrivals):
     if 21 <= hour or hour <= 2:
         score += 10
         reasons.append("Evening / late night")
-    
     if weather.get("rain_risk"):
         score += 25
         reasons.append(f"Rain risk ({weather.get('next_3h_rain_prob', 0)}% next 3h)")
     else:
         reasons.append("Dry conditions")
-    
     arr = arrivals.get("arrivals_last_hour", 0)
     if arr >= 5:
         score += 20
@@ -99,26 +94,20 @@ def score_demand(weather, arrivals):
         reasons.append(f"Some airport activity ({arr} arrivals)")
     else:
         reasons.append("Low recent airport arrivals (or data unavailable)")
-    
     score = max(0, min(100, score))
-    
     if score >= 70:
-        level = "HIGH"
-        advice = "Good time to be online. Prioritize airport and event areas."
+        level, advice = "HIGH", "Good time to be online. Prioritize airport and event areas."
     elif score >= 50:
-        level = "MODERATE"
-        advice = "Decent demand. Mix of airport and downtown should work."
+        level, advice = "MODERATE", "Decent demand. Mix of airport and downtown should work."
     else:
-        level = "LOW"
-        advice = "Slower period. Stay near high-activity zones or wait for weather/events."
-    
+        level, advice = "LOW", "Slower period. Stay near high-activity zones or wait for weather/events."
     return {"score": score, "level": level, "advice": advice, "reasons": reasons}
 
-def handler(request):
+@app.route("/")
+def index():
     weather = get_weather()
     arrivals = get_opensky_arrivals()
     demand = score_demand(weather, arrivals)
-    
     html = f"""<!DOCTYPE html>
 <html lang=\"en\">
 <head>
@@ -161,12 +150,6 @@ small {{ color: #94a3b8; }}
 <small>Data: Open-Meteo + OpenSky (best effort). Not real-time Uber supply. Refresh for update.</small>
 </body>
 </html>"""
-    
-    return {
-        "statusCode": 200,
-        "headers": {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-cache"
-        },
-        "body": html
-    }
+    return Response(html, mimetype="text/html")
+
+application = app
