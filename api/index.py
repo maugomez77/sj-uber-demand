@@ -108,6 +108,10 @@ def index():
     weather = get_weather()
     arrivals = get_opensky_arrivals()
     demand = score_demand(weather, arrivals)
+    zones_html = "".join(
+        f'<div class="zone"><strong>{z["name"]}</strong><br><small>{z["reason"]}</small></div>'
+        for z in ZONES
+    )
     html = f"""<!DOCTYPE html>
 <html lang=\"en\">
 <head>
@@ -145,7 +149,7 @@ small {{ color: #94a3b8; }}
 </div>
 <div class=\"card\">
   <h3>Suggested zones</h3>
-  {''.join(f'<div class=\"zone\"><strong>{z[\"name\"]}</strong><br><small>{z[\"reason\"]}</small></div>' for z in ZONES)}
+  {zones_html}
 </div>
 <small>Data: Open-Meteo + OpenSky (best effort). Not real-time Uber supply. Refresh for update.</small>
 </body>
